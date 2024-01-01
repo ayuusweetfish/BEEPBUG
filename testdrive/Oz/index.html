@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html><head>
+  <meta http-equiv='Content-Type' content='text/html; charset=utf-8'>
+  <title> </title>
+</head><body>
+<div id='timer'></div>
+
+<script>
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+const createSound = (urls) => {
+  const o = {};
+
+  o.eventHandlers = {load: [], end: []};
+  const emit = (name) => {
+    for (const fn of o.eventHandlers[name]) fn();
+    o.eventHandlers[name].splice(0);
+  };
+  o.once = (name, fn) => o.eventHandlers[name].push(fn);
+
+  let buf = null;
+  const tryFetch = (i) => {
+    fetch(urls[i]).then((resp) => {
+      resp.arrayBuffer().then((dataBuf) => {
+        audioCtx.decodeAudioData(dataBuf,
+          (pcmBuf) => {
+            buf = pcmBuf;
+            emit('load');
+          },
+          () => {
+            if (i + 1 < urls.length) tryFetch(i + 1);
+            // XXX: Throw an exception otherwise?
+          }
+        );
+      });
+    });
+  };
+  tryFetch(0);
+
+  o.duration = () => buf.duration;
+
+  let count = 0;
+  let overallPlaybackRate = 1;
+  const s = {};
+  o.stop = (id) => {
+    if (id === undefined)
+      for (const id in s) o.stop(id);
+    else if (s[id]) {
+      s[id].nSource.stop();
+      s[id].nSource.disconnect();
+      s[id].nGain.disconnect();
+      delete s[id];
+    }
+  };
+  o.play = () => {
+    const id = count++;
+    const nSource = audioCtx.createBufferSource();
+    nSource.buffer = buf;
+    nSource.playbackRate.setValueAtTime(
+      overallPlaybackRate, audioCtx.currentTime);
+    nSource.start();
+    nSource.onended = () => {
+      emit('end');
+      o.stop(id);
+    };
+    const nGain = audioCtx.createGain();
+    nSource.connect(nGain);
+    nGain.connect(audioCtx.destination);
+    s[id] = {
+      nSource: nSource,
+      nGain: nGain,
+    };
+    return id;
+  };
+
+  o.volume = (vol, id) => {
+    if (vol === undefined) {
+      if (!s[id]) return 0;
+      return s[id].nGain.gain.value;
+    }
+    s[id].nGain.gain.value = vol;
+  };
+  o.fade = (from, to, dur, id) => {
+    if (id === undefined) {
+      for (const id in s) o.fade(from, to, dur, id);
+      return;
+    }
+    if (!s[id]) return;
+    const g = s[id].nGain.gain;
+    const t = audioCtx.currentTime;
+    g.setValueAtTime(from, t);
+    g.linearRampToValueAtTime(to, t + dur / 1000);
+  };
+  o.rate = (rate) => {
+    // Only overall setting is necessary, and only applies to new instances
+    overallPlaybackRate = rate;
+  };
+
+  return o;
+};
+
+const preloadSounds = (callback) => {
+  let count = 0;
+  for (const pathList of paths) {
+    const name = pathList[0].split('/').pop().split('.')[0];
+    const audio = createSound(pathList);
+    audio.once('load', () => {
+      callback(++count, paths.length);
+    });
+    audios[name] = audio;
+  }
+};
+
+const playSound = (name, vol) => {
+  if (!sfxOn) return;
+  if (name === 'beat' && !metronomeOn) return;
+  const id = audios[name].play();
+  audios[name].volume(vol !== undefined ? vol : 1, id);
+  return [name, id];
+};
+const stopSound = ([name, id], fade) => {
+  if (!sfxOn) return;
+  if (fade) {
+    audios[name].fade(audios[name].volume(undefined, id), 0, 100, id);
+  } else {
+    audios[name].stop(id);
+  }
+};
+
+////////////////////////
+
+const action1 = () => console.log('Action 1 triggered')
+const setVolume = (vol) => {
+  console.log(`vol ${vol}`)
+}
+let volume = 1
+setVolume(volume)
+
+let timeOffset = 0
+const timerEl = document.getElementById('timer')
+let timerReference = Date.now()
+const updateTimerDisp = () => {
+  requestAnimationFrame(updateTimerDisp)
+  timerEl.innerText = Math.floor((Date.now() - timerReference + timeOffset) / 1000)
+}
+requestAnimationFrame(updateTimerDisp)
+
+let socket
+const reconnect = () => {
+  socket = new WebSocket('ws://localhost:1026/')
+  socket.onopen = () => {}
+  socket.onclose = () => {
+    socket = undefined
+    setTimeout(() => reconnect(), 1000)
+  }
+  socket.onmessage = (e) => {
+    const o = JSON.parse(e.data)
+    if (o.type === 'id') {
+      console.log('Connected!')
+      socket.send(JSON.stringify({
+        type: 'intro',
+        disp: 'BeepBug — Beep',
+        elements: [
+          { name: 'vol', type: 'slider', disp: 'Volume',
+            min: 0, max: 1, val: volume },
+          { name: 'offs', type: 'slider', disp: 'Offset',
+            min: -500, max: 500, step: 1, val: timeOffset },
+          { name: 'startloop', type: 'action', disp: 'Start loop' },
+          { name: 'stoploop', type: 'action', disp: 'Stop loop' },
+        ]
+      }))
+    } else if (o.type === 'act') {
+      if (o.name === 'startloop' || o.name === 'stoploop') {
+        const delay = 2000 - (Date.now() - timerReference + timeOffset) % 2000
+        setTimeout(() => {
+          console.log(`action ${o.name}`)
+          socket.send(JSON.stringify({ type: 'done', ts: o.ts }))
+        }, delay)
+      }
+    } else if (o.type === 'set') {
+      if (o.name === 'vol') {
+        volume = o.val
+      }
+      if (o.name === 'offs') timeOffset = o.val
+      socket.send(JSON.stringify({ type: 'upd', ts: o.ts, val: o.val }))
+    }
+  }
+}
+reconnect()
+
+document.body.addEventListener('keydown', (e) => {
+  if (e.keyCode === 32) {
+    timerReference = Date.now()
+    socket.send(JSON.stringify({ type: 'upd', name: 'offs', val: 0 }))
+  }
+})
+</script>
+</body></html>

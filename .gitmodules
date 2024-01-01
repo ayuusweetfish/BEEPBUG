@@ -1,0 +1,3 @@
+[submodule "testdrive/Oz/PatchworkGirl"]
+	path = testdrive/Oz/PatchworkGirl
+	url = https://github.com/ayuusweetfish/PatchworkGirl.git
