@@ -3,10 +3,14 @@
   <meta http-equiv='Content-Type' content='text/html; charset=utf-8'>
   <title> </title>
 </head><body>
-<div id='timer'></div>
+<div>Role: <span id='page-role'></span></div>
+<div id='timer'>Press Space to start</div>
+<div id='loading'></div>
 
 <script>
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+const audios = {};
 
 const createSound = (urls) => {
   const o = {};
@@ -52,16 +56,17 @@ const createSound = (urls) => {
       delete s[id];
     }
   };
-  o.play = () => {
+  o.play = (isLoop) => {
     const id = count++;
     const nSource = audioCtx.createBufferSource();
     nSource.buffer = buf;
     nSource.playbackRate.setValueAtTime(
       overallPlaybackRate, audioCtx.currentTime);
+    nSource.loop = isLoop;
     nSource.start();
     nSource.onended = () => {
       emit('end');
-      o.stop(id);
+      if (!isLoop) o.stop(id);
     };
     const nGain = audioCtx.createGain();
     nSource.connect(nGain);
@@ -99,7 +104,7 @@ const createSound = (urls) => {
   return o;
 };
 
-const preloadSounds = (callback) => {
+const preloadSounds = (paths, callback) => {
   let count = 0;
   for (const pathList of paths) {
     const name = pathList[0].split('/').pop().split('.')[0];
@@ -111,30 +116,25 @@ const preloadSounds = (callback) => {
   }
 };
 
-const playSound = (name, vol) => {
-  if (!sfxOn) return;
-  if (name === 'beat' && !metronomeOn) return;
-  const id = audios[name].play();
-  audios[name].volume(vol !== undefined ? vol : 1, id);
-  return [name, id];
-};
-const stopSound = ([name, id], fade) => {
-  if (!sfxOn) return;
-  if (fade) {
-    audios[name].fade(audios[name].volume(undefined, id), 0, 100, id);
-  } else {
-    audios[name].stop(id);
-  }
-};
-
 ////////////////////////
 
-const action1 = () => console.log('Action 1 triggered')
-const setVolume = (vol) => {
-  console.log(`vol ${vol}`)
-}
-let volume = 1
-setVolume(volume)
+const pageRole = (window.location.search === '?beep' ? 'beep' : 'bug')
+const pageRoleEl = document.getElementById('page-role')
+pageRoleEl.innerText = pageRole
+
+const loadingEl = document.getElementById('loading')
+preloadSounds([
+  [`idle-${pageRole}.mp3`],
+  [`track-${pageRole}.wav`],
+], (count, total) => {
+  loadingEl.innerText = `Loading ${count}/${total}`
+  if (count === total) {
+    loadingEl.innerText = 'Loading done'
+    setTimeout(() => {
+      loadingEl.innerText = ''
+    }, 1000)
+  }
+})
 
 let timeOffset = 0
 const timerEl = document.getElementById('timer')
@@ -143,11 +143,21 @@ const updateTimerDisp = () => {
   requestAnimationFrame(updateTimerDisp)
   timerEl.innerText = Math.floor((Date.now() - timerReference + timeOffset) / 1000)
 }
-requestAnimationFrame(updateTimerDisp)
+
+let idleSoundId, trackSoundId
+let volume
+const setVolume = (vol) => {
+  volume = vol
+  if (idleSoundId !== undefined && trackSoundId === undefined) {
+    audios[`idle-${pageRole}`].volume(volume, idleSoundId)
+  }
+}
+setVolume(1)
 
 let socket
 const reconnect = () => {
-  socket = new WebSocket('ws://localhost:1026/')
+  // socket = new WebSocket('ws://localhost:1026/')
+  socket = new WebSocket('wss://postune.deno.dev/')
   socket.onopen = () => {}
   socket.onclose = () => {
     socket = undefined
@@ -159,7 +169,7 @@ const reconnect = () => {
       console.log('Connected!')
       socket.send(JSON.stringify({
         type: 'intro',
-        disp: 'BeepBug — Beep',
+        disp: `BeepBug — ${pageRole}`,
         elements: [
           { name: 'vol', type: 'slider', disp: 'Volume',
             min: 0, max: 1, val: volume },
@@ -171,16 +181,27 @@ const reconnect = () => {
       }))
     } else if (o.type === 'act') {
       if (o.name === 'startloop' || o.name === 'stoploop') {
-        const delay = 2000 - (Date.now() - timerReference + timeOffset) % 2000
+        const delay = 1800 +
+          2000 - ((Date.now() + 2000 - 1800) - timerReference + timeOffset) % 2000
+        if (o.name === 'startloop' && trackSoundId === undefined) {
+          audios[`idle-${pageRole}`].fade(volume, 0, 1200, idleSoundId)
+        } else if (o.name === 'stoploop' && trackSoundId !== undefined) {
+          audios[`track-${pageRole}`].fade(1, 0, 1200, trackSoundId)
+        }
         setTimeout(() => {
           console.log(`action ${o.name}`)
-          socket.send(JSON.stringify({ type: 'done', ts: o.ts }))
+          if (o.name === 'startloop' && trackSoundId === undefined) {
+            trackSoundId = audios[`track-${pageRole}`].play(true)
+          } else if (o.name === 'stoploop' && trackSoundId !== undefined) {
+            audios[`track-${pageRole}`].stop(trackSoundId)
+            trackSoundId = undefined
+            audios[`idle-${pageRole}`].fade(0, volume, 1200, idleSoundId)
+          }
         }, delay)
+        socket.send(JSON.stringify({ type: 'done', ts: o.ts }))
       }
     } else if (o.type === 'set') {
-      if (o.name === 'vol') {
-        volume = o.val
-      }
+      if (o.name === 'vol') setVolume(o.val)
       if (o.name === 'offs') timeOffset = o.val
       socket.send(JSON.stringify({ type: 'upd', ts: o.ts, val: o.val }))
     }
@@ -188,10 +209,18 @@ const reconnect = () => {
 }
 reconnect()
 
+let playStarted = false
 document.body.addEventListener('keydown', (e) => {
   if (e.keyCode === 32) {
     timerReference = Date.now()
+    timeOffset = 0
     socket.send(JSON.stringify({ type: 'upd', name: 'offs', val: 0 }))
+    if (!playStarted) {
+      playStarted = true
+      requestAnimationFrame(updateTimerDisp)
+      idleSoundId = audios[`idle-${pageRole}`].play(true)
+      setVolume(volume)
+    }
   }
 })
 </script>
