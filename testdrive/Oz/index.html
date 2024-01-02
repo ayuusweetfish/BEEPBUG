@@ -157,7 +157,9 @@ setVolume(1)
 let socket
 const reconnect = () => {
   // socket = new WebSocket('ws://localhost:1026/')
-  socket = new WebSocket('wss://postune.deno.dev/')
+  // socket = new WebSocket('wss://postune.deno.dev/')
+  // socket = new WebSocket('wss://0-th.art/patchwork')
+  socket = new WebSocket('ws://183.173.40.218:1026/')
   socket.onopen = () => {}
   socket.onclose = () => {
     socket = undefined
