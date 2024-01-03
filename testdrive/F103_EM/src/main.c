@@ -116,9 +116,9 @@ int main()
   HAL_TIM_PWM_ConfigChannel(&tim2, &tim2_ch2_oc_init, TIM_CHANNEL_2);
   HAL_TIM_PWM_Start(&tim2, TIM_CHANNEL_2);
   while (1) {
-    for (int i = 0; i < 100; i++) {
-      TIM2->CCR2 = i * 10;
-      HAL_Delay(10);
+    for (int i = 90; i < 100; i++) {
+      TIM2->CCR2 = i * 100;
+      HAL_Delay(150);
     }
   }
 
