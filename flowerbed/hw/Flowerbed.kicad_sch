@@ -2079,6 +2079,32 @@
     )
   )
 
+  (symbol (lib_id "Device:R") (at 78.105 85.725 90) (unit 1)
+    (in_bom yes) (on_board yes) (dnp no)
+    (uuid 3a49ce7a-c5c1-4ff2-83c2-f1adaa429e80)
+    (property "Reference" "R3" (at 78.105 80.01 90)
+      (effects (font (size 1.27 1.27)))
+    )
+    (property "Value" "2k TBD" (at 78.105 82.55 90)
+      (effects (font (size 1.27 1.27)))
+    )
+    (property "Footprint" "Resistor_SMD:R_0603_1608Metric" (at 78.105 87.503 90)
+      (effects (font (size 1.27 1.27)) hide)
+    )
+    (property "Datasheet" "~" (at 78.105 85.725 0)
+      (effects (font (size 1.27 1.27)) hide)
+    )
+    (pin "2" (uuid 8ed9b307-d215-4088-bf57-aec5efa9fbab))
+    (pin "1" (uuid ff1b5029-a190-443a-8c43-77ebbe99558c))
+    (instances
+      (project "Flowerbed"
+        (path "/ee02efde-3d2c-44cf-8dc7-72cfd16bb7ed"
+          (reference "R3") (unit 1)
+        )
+      )
+    )
+  )
+
   (symbol (lib_id "power:GND") (at 80.01 66.675 0) (unit 1)
     (in_bom yes) (on_board yes) (dnp no) (fields_autoplaced)
     (uuid 4226d497-4f80-4896-8dbd-0721cefb6a6d)
@@ -2541,6 +2567,32 @@
       (project "Flowerbed"
         (path "/ee02efde-3d2c-44cf-8dc7-72cfd16bb7ed"
           (reference "#PWR016") (unit 1)
+        )
+      )
+    )
+  )
+
+  (symbol (lib_id "Device:LED") (at 88.265 85.725 180) (unit 1)
+    (in_bom yes) (on_board yes) (dnp no)
+    (uuid 7c12260f-d578-44ae-ad95-688fea3701b2)
+    (property "Reference" "D1" (at 88.9 79.375 0)
+      (effects (font (size 1.27 1.27)))
+    )
+    (property "Value" "Green" (at 88.9 81.915 0)
+      (effects (font (size 1.27 1.27)))
+    )
+    (property "Footprint" "LED_SMD:LED_0603_1608Metric" (at 88.265 85.725 0)
+      (effects (font (size 1.27 1.27)) hide)
+    )
+    (property "Datasheet" "~" (at 88.265 85.725 0)
+      (effects (font (size 1.27 1.27)) hide)
+    )
+    (pin "2" (uuid fff89999-c8a3-43ba-8d10-c6f2e5397ee6))
+    (pin "1" (uuid 854c6df1-a536-44e5-8f61-1a42f9b05607))
+    (instances
+      (project "Flowerbed"
+        (path "/ee02efde-3d2c-44cf-8dc7-72cfd16bb7ed"
+          (reference "D1") (unit 1)
         )
       )
     )
@@ -3076,32 +3128,6 @@
     )
   )
 
-  (symbol (lib_id "Device:R") (at 88.265 85.725 90) (unit 1)
-    (in_bom yes) (on_board yes) (dnp no)
-    (uuid c81f35cf-df6f-472e-9f80-4b9f28eccb86)
-    (property "Reference" "R3" (at 88.265 80.01 90)
-      (effects (font (size 1.27 1.27)))
-    )
-    (property "Value" "2k TBD" (at 88.265 82.55 90)
-      (effects (font (size 1.27 1.27)))
-    )
-    (property "Footprint" "Resistor_SMD:R_0603_1608Metric" (at 88.265 87.503 90)
-      (effects (font (size 1.27 1.27)) hide)
-    )
-    (property "Datasheet" "~" (at 88.265 85.725 0)
-      (effects (font (size 1.27 1.27)) hide)
-    )
-    (pin "2" (uuid ce7e22bc-fec5-4c1b-a299-7fd55aad984a))
-    (pin "1" (uuid 80d7d817-f74e-4ca0-861b-bf396dcb61ef))
-    (instances
-      (project "Flowerbed"
-        (path "/ee02efde-3d2c-44cf-8dc7-72cfd16bb7ed"
-          (reference "R3") (unit 1)
-        )
-      )
-    )
-  )
-
   (symbol (lib_id "power:GND") (at 194.945 127 0) (unit 1)
     (in_bom yes) (on_board yes) (dnp no) (fields_autoplaced)
     (uuid d17f4e0f-57af-461f-8bc2-f3b28a6562c9)
@@ -3332,32 +3358,6 @@
       (project "Flowerbed"
         (path "/ee02efde-3d2c-44cf-8dc7-72cfd16bb7ed"
           (reference "#FLG01") (unit 1)
-        )
-      )
-    )
-  )
-
-  (symbol (lib_id "Device:LED") (at 78.105 85.725 180) (unit 1)
-    (in_bom yes) (on_board yes) (dnp no)
-    (uuid ee2f0ecf-ef9b-4232-8dd0-b042cc77e666)
-    (property "Reference" "D1" (at 78.74 79.375 0)
-      (effects (font (size 1.27 1.27)))
-    )
-    (property "Value" "Green" (at 78.74 81.915 0)
-      (effects (font (size 1.27 1.27)))
-    )
-    (property "Footprint" "LED_SMD:LED_0603_1608Metric" (at 78.105 85.725 0)
-      (effects (font (size 1.27 1.27)) hide)
-    )
-    (property "Datasheet" "~" (at 78.105 85.725 0)
-      (effects (font (size 1.27 1.27)) hide)
-    )
-    (pin "2" (uuid 52efbe50-bb59-44c8-83a3-17bb100b9be5))
-    (pin "1" (uuid 7406bf8a-543b-4b0a-a965-062d47e57c4c))
-    (instances
-      (project "Flowerbed"
-        (path "/ee02efde-3d2c-44cf-8dc7-72cfd16bb7ed"
-          (reference "D1") (unit 1)
         )
       )
     )
