@@ -78,7 +78,12 @@ int main()
   RCC_OscInitTypeDef osc_init = { 0 };
   osc_init.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   osc_init.HSEState = RCC_HSE_BYPASS;
-  osc_init.PLL.PLLState = RCC_PLL_OFF;
+  osc_init.PLL.PLLState = RCC_PLL_ON;
+  osc_init.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  osc_init.PLL.PLLM = RCC_PLLM_DIV1;  // VCO input 12.288 MHz (2.66 ~ 16 MHz)
+  osc_init.PLL.PLLN = 12;             // VCO output 147.456 MHz (64 ~ 344 MHz)
+  osc_init.PLL.PLLP = RCC_PLLP_DIV4;  // PLLPCLK 36.864 MHz
+  osc_init.PLL.PLLR = RCC_PLLR_DIV4;  // PLLRCLK 36.864 MHz
   HAL_RCC_OscConfig(&osc_init);
 
   RCC_ClkInitTypeDef clk_init = { 0 };
@@ -86,7 +91,7 @@ int main()
     RCC_CLOCKTYPE_SYSCLK |
     RCC_CLOCKTYPE_HCLK |
     RCC_CLOCKTYPE_PCLK1;
-  clk_init.SYSCLKSource = RCC_SYSCLKSOURCE_HSE;
+  clk_init.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;  // PLLRCLK
   clk_init.AHBCLKDivider = RCC_SYSCLK_DIV1;
   clk_init.APB1CLKDivider = RCC_HCLK_DIV1;
   HAL_RCC_ClockConfig(&clk_init, FLASH_LATENCY_2);
@@ -103,8 +108,8 @@ int main()
   tim14 = (TIM_HandleTypeDef){
     .Instance = TIM14,
     .Init = {
-      // 12.288 MHz
-      .Prescaler = 768 - 1,
+      // 36.864 MHz
+      .Prescaler = 2304 - 1,
       .CounterMode = TIM_COUNTERMODE_UP,
       .Period = 16000 - 1,
       .ClockDivision = TIM_CLOCKDIVISION_DIV1,
