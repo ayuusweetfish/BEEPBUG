@@ -151,6 +151,26 @@ int main()
   };
   HAL_I2C_Init(&i2c2);
 
+  // ======== DMA for I2S ========
+  __HAL_RCC_DMA1_CLK_ENABLE();
+  DMA_HandleTypeDef dma_tx;
+  // RM0454, Ch. 9.3.2
+  dma_tx.Instance = DMA1_Channel1;
+  dma_tx.Init.Request = DMA_REQUEST_SPI1_TX;
+  dma_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
+  dma_tx.Init.PeriphInc = DMA_PINC_DISABLE;
+  dma_tx.Init.MemInc = DMA_MINC_ENABLE;
+  dma_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
+  dma_tx.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;
+  dma_tx.Init.Mode = DMA_CIRCULAR;
+  dma_tx.Init.Priority = DMA_PRIORITY_LOW;
+  HAL_DMA_Init(&dma_tx);
+
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 15, 1);
+  HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+  HAL_NVIC_SetPriority(SPI1_IRQn, 15, 2);
+  HAL_NVIC_EnableIRQ(SPI1_IRQn);
+
   // ======== I2S ========
   gpio_init.Pin = GPIO_PIN_5 | GPIO_PIN_7;
   gpio_init.Mode = GPIO_MODE_AF_PP;
@@ -174,16 +194,19 @@ int main()
       .CPOL = I2S_CPOL_LOW,
     },
   };
+  __HAL_LINKDMA(&i2s1, hdmatx, dma_tx);
   HAL_I2S_Init(&i2s1);
 
   swv_printf("sys clock = %u\n", HAL_RCC_GetSysClockFreq());
   swv_printf("I2S clock = %u\n", HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_I2S1));
   // 36864000, divider is 36864000 / 16 / 48k = 48
 
-  uint16_t data[100]; // 480 Hz
-  for (int i = 0; i < 100; i++) data[i] = (i < 50 ? 4000 : 0);
+  // 480 Hz
+  uint16_t data[1000];
+  for (int i = 0; i < 1000; i++) data[i] = (i % 100 < 50 ? 4000 : 0);
   while (1) {
-    HAL_I2S_Transmit(&i2s1, data, 100, 1000);
+    // HAL_I2S_Transmit(&i2s1, data, 100, 1000);
+    HAL_I2S_Transmit_DMA(&i2s1, data, 1000);
   }
 
   VL53L0X_Dev_t dev;
@@ -256,8 +279,29 @@ void TIM14_IRQHandler()
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *tim14)
 {
-  static uint32_t count = 0, parity = 0;
+  static uint32_t parity = 0;
   HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, parity ^= 1);
+}
+
+void DMA1_Channel1_IRQHandler()
+{
+  HAL_DMA_IRQHandler(i2s1.hdmatx);
+}
+void SPI1_IRQHandler()
+{
+  HAL_I2S_IRQHandler(&i2s1);
+}
+void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *i2s1)
+{
+  static int count = 0;
+  // 128000 samples = 2.67 s
+  if ((count = (count + 1) % 128) == 0) swv_printf("! half\n");
+}
+void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *i2s1)
+{
+  static int count = 0;
+  // 128000 samples = 2.67 s
+  if ((count = (count + 1) % 128) == 0) swv_printf("! complete\n");
 }
 
 // Platform layer for VL53L0X
