@@ -44,6 +44,8 @@ static void swv_printf(const char *restrict fmt, ...)
 #define swv_printf(...)
 #endif
 
+TIM_HandleTypeDef tim14 = { 0 };
+
 int main()
 {
   HAL_Init();
@@ -74,8 +76,8 @@ int main()
 
   // ======== Clocks ========
   RCC_OscInitTypeDef osc_init = { 0 };
-  osc_init.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  osc_init.HSIState = RCC_HSI_ON;
+  osc_init.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  osc_init.HSEState = RCC_HSE_BYPASS;
   osc_init.PLL.PLLState = RCC_PLL_OFF;
   HAL_RCC_OscConfig(&osc_init);
 
@@ -84,23 +86,54 @@ int main()
     RCC_CLOCKTYPE_SYSCLK |
     RCC_CLOCKTYPE_HCLK |
     RCC_CLOCKTYPE_PCLK1;
-  clk_init.SYSCLKSource = RCC_SYSCLKSOURCE_HSI; // 16 MHz
+  clk_init.SYSCLKSource = RCC_SYSCLKSOURCE_HSE;
   clk_init.AHBCLKDivider = RCC_SYSCLK_DIV1;
   clk_init.APB1CLKDivider = RCC_HCLK_DIV1;
   HAL_RCC_ClockConfig(&clk_init, FLASH_LATENCY_2);
 
   HAL_NVIC_SetPriority(SysTick_IRQn, 0, 0);
 
-  while (1) {
-    HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 1);
-    HAL_Delay(500);
-    HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 0);
-    HAL_Delay(500);
+  for (int i = 0; i < 2; i++) {
+    HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 1); HAL_Delay(100);
+    HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 0); HAL_Delay(100);
   }
+
+  // ======== Timer ========
+  __HAL_RCC_TIM14_CLK_ENABLE();
+  tim14 = (TIM_HandleTypeDef){
+    .Instance = TIM14,
+    .Init = {
+      // 12.288 MHz
+      .Prescaler = 768 - 1,
+      .CounterMode = TIM_COUNTERMODE_UP,
+      .Period = 16000 - 1,
+      .ClockDivision = TIM_CLOCKDIVISION_DIV1,
+      .RepetitionCounter = 0,
+    },
+  };
+  HAL_TIM_Base_Init(&tim14);
+  HAL_TIM_Base_Start_IT(&tim14);
+  __HAL_TIM_ENABLE_IT(&tim14, TIM_IT_UPDATE);
+  HAL_NVIC_SetPriority(TIM14_IRQn, 1, 0);
+  HAL_NVIC_EnableIRQ(TIM14_IRQn);
+
+  while (1) { }
 }
 
 void SysTick_Handler()
 {
   HAL_IncTick();
   HAL_SYSTICK_IRQHandler();
+}
+
+void TIM14_IRQHandler()
+{
+  HAL_TIM_IRQHandler(&tim14);
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *tim14)
+{
+  static uint32_t count = 0, parity = 0;
+  swv_printf("timer\n");
+  HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, parity ^= 1);
 }
