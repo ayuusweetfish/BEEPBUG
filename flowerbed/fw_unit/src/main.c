@@ -438,7 +438,7 @@ int main()
 
   // ======== DMA for SPI ========
   DMA_HandleTypeDef dma_spi2_tx;
-  dma_spi2_tx.Instance = DMA1_Channel4;
+  dma_spi2_tx.Instance = DMA1_Channel2;
   dma_spi2_tx.Init.Request = DMA_REQUEST_SPI2_TX;
   dma_spi2_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
   dma_spi2_tx.Init.PeriphInc = DMA_PINC_DISABLE;
@@ -450,7 +450,7 @@ int main()
   HAL_DMA_Init(&dma_spi2_tx);
 
   DMA_HandleTypeDef dma_spi2_rx;
-  dma_spi2_rx.Instance = DMA1_Channel2;
+  dma_spi2_rx.Instance = DMA1_Channel3;
   dma_spi2_rx.Init.Request = DMA_REQUEST_SPI2_RX;
   dma_spi2_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
   dma_spi2_rx.Init.PeriphInc = DMA_PINC_DISABLE;
@@ -461,11 +461,9 @@ int main()
   dma_spi2_rx.Init.Priority = DMA_PRIORITY_LOW;
   HAL_DMA_Init(&dma_spi2_rx);
 
-  HAL_NVIC_SetPriority(DMA1_Ch4_5_DMAMUX1_OVR_IRQn, 15, 4);
-  HAL_NVIC_EnableIRQ(DMA1_Ch4_5_DMAMUX1_OVR_IRQn);
   HAL_NVIC_SetPriority(DMA1_Channel2_3_IRQn, 15, 3);
   HAL_NVIC_EnableIRQ(DMA1_Channel2_3_IRQn);
-  HAL_NVIC_SetPriority(SPI2_IRQn, 15, 5);
+  HAL_NVIC_SetPriority(SPI2_IRQn, 15, 4);
   HAL_NVIC_EnableIRQ(SPI2_IRQn);
 
   // ======== SPI ========
@@ -626,19 +624,16 @@ void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *i2s1)
   if ((count = (count + 1) % 128) == 0) swv_printf("! complete\n");
 }
 
-void DMA1_Ch4_5_DMAMUX1_OVR_IRQHandler()
-{
-  HAL_DMA_IRQHandler(spi2.hdmatx);
-}
 void DMA1_Channel2_3_IRQHandler()
 {
+  HAL_DMA_IRQHandler(spi2.hdmatx);
   HAL_DMA_IRQHandler(spi2.hdmarx);
 }
 void SPI2_IRQHandler()
 {
   HAL_SPI_IRQHandler(&spi2);
 }
-void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *spi2)
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *spi2)
 {
   swv_printf("SPI complete\n");
 }
