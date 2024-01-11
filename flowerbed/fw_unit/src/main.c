@@ -437,10 +437,22 @@ int main()
   // 36864000, divider is 36864000 / 16 / 48k = 48
 
   // ======== DMA for SPI ========
+  DMA_HandleTypeDef dma_spi2_tx;
+  dma_spi2_tx.Instance = DMA1_Channel4;
+  dma_spi2_tx.Init.Request = DMA_REQUEST_SPI2_TX;
+  dma_spi2_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
+  dma_spi2_tx.Init.PeriphInc = DMA_PINC_DISABLE;
+  dma_spi2_tx.Init.MemInc = DMA_MINC_ENABLE;
+  dma_spi2_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+  dma_spi2_tx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+  dma_spi2_tx.Init.Mode = DMA_NORMAL;
+  dma_spi2_tx.Init.Priority = DMA_PRIORITY_LOW;
+  HAL_DMA_Init(&dma_spi2_tx);
+
   DMA_HandleTypeDef dma_spi2_rx;
   dma_spi2_rx.Instance = DMA1_Channel2;
-  dma_spi2_rx.Init.Request = DMA_REQUEST_SPI1_TX;
-  dma_spi2_rx.Init.Direction = DMA_MEMORY_TO_PERIPH;
+  dma_spi2_rx.Init.Request = DMA_REQUEST_SPI2_RX;
+  dma_spi2_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
   dma_spi2_rx.Init.PeriphInc = DMA_PINC_DISABLE;
   dma_spi2_rx.Init.MemInc = DMA_MINC_ENABLE;
   dma_spi2_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
@@ -449,9 +461,11 @@ int main()
   dma_spi2_rx.Init.Priority = DMA_PRIORITY_LOW;
   HAL_DMA_Init(&dma_spi2_rx);
 
+  HAL_NVIC_SetPriority(DMA1_Ch4_5_DMAMUX1_OVR_IRQn, 15, 4);
+  HAL_NVIC_EnableIRQ(DMA1_Ch4_5_DMAMUX1_OVR_IRQn);
   HAL_NVIC_SetPriority(DMA1_Channel2_3_IRQn, 15, 3);
   HAL_NVIC_EnableIRQ(DMA1_Channel2_3_IRQn);
-  HAL_NVIC_SetPriority(SPI2_IRQn, 15, 4);
+  HAL_NVIC_SetPriority(SPI2_IRQn, 15, 5);
   HAL_NVIC_EnableIRQ(SPI2_IRQn);
 
   // ======== SPI ========
@@ -483,10 +497,13 @@ int main()
   spi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
   spi2.Init.DataSize = SPI_DATASIZE_8BIT;
   spi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;  // APB / 2 = 18.432 MHz
+  __HAL_LINKDMA(&spi2, hdmatx, dma_spi2_tx);
   __HAL_LINKDMA(&spi2, hdmarx, dma_spi2_rx);
   HAL_SPI_Init(&spi2);
   __HAL_SPI_ENABLE(&spi2);
 
+  __HAL_DMA_ENABLE_IT(&dma_spi2_tx, (DMA_IT_TC | DMA_IT_TE));
+  __HAL_DMA_ENABLE(&dma_spi2_tx);
   __HAL_DMA_ENABLE_IT(&dma_spi2_rx, (DMA_IT_TC | DMA_IT_TE));
   __HAL_DMA_ENABLE(&dma_spi2_rx);
 
@@ -497,7 +514,11 @@ int main()
   // Capacity = 0x15 (2^21 B = 2 MiB = 16 Mib)
   swv_printf("MF = %02x\nID = %02x %02x\nUID = %02x%02x%02x%02x\n",
     jedec[0], jedec[1], jedec[2], uid[0], uid[1], uid[2], uid[3]);
-  flash_test_write_breakpoint();
+  // flash_test_write_breakpoint();
+  uint8_t flash_data[1600];
+  flash_read_dma(0, flash_data, 1600);
+  for (int i = 0; i < 32; i++)
+    swv_printf("%02x%c", flash_data[i], i % 8 == 7 ? '\n' : ' ');
 
   while (1) {
   }
@@ -605,6 +626,10 @@ void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *i2s1)
   if ((count = (count + 1) % 128) == 0) swv_printf("! complete\n");
 }
 
+void DMA1_Ch4_5_DMAMUX1_OVR_IRQHandler()
+{
+  HAL_DMA_IRQHandler(spi2.hdmatx);
+}
 void DMA1_Channel2_3_IRQHandler()
 {
   HAL_DMA_IRQHandler(spi2.hdmarx);
