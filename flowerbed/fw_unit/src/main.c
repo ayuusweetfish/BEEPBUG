@@ -219,6 +219,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *tim14)
   HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, parity ^= 1);
 }
 
+// Platform layer for VL53L0X
+// vl53l0x/vl53l0x_platform.h
+
 VL53L0X_Error VL53L0X_LockSequenceAccess(VL53L0X_DEV Dev)
 {
   return VL53L0X_ERROR_NONE;
