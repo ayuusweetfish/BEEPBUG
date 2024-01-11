@@ -6,8 +6,11 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define ACT_LED_PIN   GPIO_PIN_15
 #define ACT_LED_PORT  GPIOC
+#define ACT_LED_PIN   GPIO_PIN_15
+
+#define W25Q_CS_PORT  GPIOA
+#define W25Q_CS_PIN   GPIO_PIN_2
 
 // #define RELEASE
 #ifndef RELEASE
@@ -49,6 +52,237 @@ static void swv_printf(const char *restrict fmt, ...)
 TIM_HandleTypeDef tim14 = { 0 };
 I2C_HandleTypeDef i2c2 = { 0 };
 I2S_HandleTypeDef i2s1 = { 0 };
+SPI_HandleTypeDef spi2 = { 0 };
+
+#pragma GCC optimize("O3")
+static inline void spi2_transmit(uint8_t *data, size_t size)
+{
+  HAL_SPI_Transmit(&spi2, data, size, 1000); return;
+/*
+  for (int i = 0; i < size; i++) {
+    while (!(SPI2->SR & SPI_SR_TXE)) { }
+    SPI2->DR = data[i];
+  }
+  while (!(SPI2->SR & SPI_SR_TXE)) { }
+  while ((SPI2->SR & SPI_SR_BSY)) { }
+  // Clear OVR flag
+  (void)SPI2->DR;
+  (void)SPI2->SR;
+*/
+}
+
+#pragma GCC optimize("O3")
+static inline void spi2_receive(uint8_t *data, size_t size)
+{
+  HAL_SPI_Receive(&spi2, data, size, 1000); return;
+/*
+  for (int i = 0; i < size; i++) {
+    while (!(SPI2->SR & SPI_SR_TXE)) { }
+    SPI2->DR = 0;
+    while (!(SPI2->SR & SPI_SR_RXNE)) { }
+    data[i] = (uint8_t)SPI2->DR;
+  }
+  while (!(SPI2->SR & SPI_SR_TXE)) { }
+  while ((SPI2->SR & SPI_SR_BSY)) { }
+*/
+}
+
+#pragma GCC optimize("O3")
+static inline void spi_flash_tx_rx(
+  GPIO_TypeDef *cs_port, uint32_t cs_pin,
+  uint8_t *txbuf, size_t txsize,
+  uint8_t *rxbuf, size_t rxsize
+) {
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 16;
+  spi2_transmit(txbuf, txsize);
+  if (rxsize != 0) {
+    while (SPI1->SR & SPI_SR_BSY) { }
+    spi2_receive(rxbuf, rxsize);
+  }
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 0;
+}
+
+#define flash_cmd(_cmd) \
+  spi_flash_tx_rx(W25Q_CS_PORT, W25Q_CS_PIN, (_cmd), sizeof (_cmd), NULL, 0)
+#define flash_cmd_sized(_cmd, _cmdlen) \
+  spi_flash_tx_rx(W25Q_CS_PORT, W25Q_CS_PIN, (_cmd), (_cmdlen), NULL, 0)
+#define flash_cmd_bi(_cmd, _rxbuf) \
+  spi_flash_tx_rx(W25Q_CS_PORT, W25Q_CS_PIN, (_cmd), sizeof (_cmd), (_rxbuf), sizeof (_rxbuf))
+#define flash_cmd_bi_sized(_cmd, _cmdlen, _rxbuf, _rxlen) \
+  spi_flash_tx_rx(W25Q_CS_PORT, W25Q_CS_PIN, (_cmd), (_cmdlen), (_rxbuf), (_rxlen))
+
+uint8_t flash_status0()
+{
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 16;
+  uint8_t op_read_status[] = {0x05};
+  spi2_transmit(op_read_status, sizeof op_read_status);
+  uint8_t status0;
+  spi2_receive(&status0, 1);
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 0;
+  return status0;
+}
+
+__attribute__ ((noinline))
+uint32_t flash_status_all()
+{
+  uint8_t op_read_status;
+  uint8_t status[3];
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 16;
+  op_read_status = 0x05; spi2_transmit(&op_read_status, 1); spi2_receive(&status[0], 1);
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 0;
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 16;
+  op_read_status = 0x35; spi2_transmit(&op_read_status, 1); spi2_receive(&status[1], 1);
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 0;
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 16;
+  op_read_status = 0x15; spi2_transmit(&op_read_status, 1); spi2_receive(&status[2], 1);
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 0;
+  return ((uint32_t)status[2] << 16) | ((uint32_t)status[1] << 8) | status[0];
+}
+
+void flash_wait_poll(uint32_t interval_us)
+{
+  uint8_t status0;
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 16;
+  uint8_t op_read_status[] = {0x05};
+  spi2_transmit(op_read_status, sizeof op_read_status);
+  do {
+    // dwt_delay(interval_us * CYC_MICROSECOND);
+    spi2_receive(&status0, 1);
+    // swv_printf("BUSY = %u, SysTick = %lu\n", status0 & 1, HAL_GetTick());
+  } while (status0 & 1);
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 0;
+}
+
+void flash_id(uint8_t jedec[3], uint8_t uid[4])
+{
+  uint8_t op_read_jedec[] = {0x9F};
+  flash_cmd_bi_sized(op_read_jedec, sizeof op_read_jedec, jedec, 3);
+  uint8_t op_read_uid[] = {0x4B, 0x00, 0x00, 0x00, 0x00};
+  flash_cmd_bi_sized(op_read_uid, sizeof op_read_uid, uid, 4);
+}
+
+void flash_erase_4k(uint32_t addr)
+{
+  addr &= ~0xFFF;
+  uint8_t op_write_enable[] = {0x06};
+  flash_cmd(op_write_enable);
+  uint8_t op_sector_erase[] = {
+    0x20, // Sector Erase
+    (addr >> 16) & 0xFF, (addr >> 8) & 0xFF, (addr >> 0) & 0xFF,
+  };
+  flash_cmd(op_sector_erase);
+  // Wait for completion (t_SE max. = 400 ms, typ. = 40 ms)
+  flash_wait_poll(1000);
+}
+
+void flash_erase_64k(uint32_t addr)
+{
+  addr &= ~0xFFFF;
+  uint8_t op_write_enable[] = {0x06};
+  flash_cmd(op_write_enable);
+  uint8_t op_sector_erase[] = {
+    0xD8, // 64KB Block Erase
+    (addr >> 16) & 0xFF, (addr >> 8) & 0xFF, (addr >> 0) & 0xFF,
+  };
+  flash_cmd(op_sector_erase);
+  // Wait for completion (t_BE2 max. = 2000 ms, typ. = 150 ms)
+  flash_wait_poll(1000);
+}
+
+void flash_erase_chip()
+{
+  uint8_t op_write_enable[] = {0xC7};
+  flash_cmd(op_write_enable);
+  uint8_t op_chip_erase[] = {
+    0x20, // Chip Erase
+  };
+  flash_cmd(op_chip_erase);
+  // Wait for completion (t_CE max. = 25000 ms, typ. = 5000 ms)
+  flash_wait_poll(10000);
+}
+
+void flash_write_page(uint32_t addr, uint8_t *data, size_t size)
+{
+  // assert(size > 0 && size <= 256);
+  uint8_t op_write_enable[] = {0x06};
+  flash_cmd(op_write_enable);
+  uint8_t op_page_program[260] = {
+    0x02, // Page Program
+    (addr >> 16) & 0xFF, (addr >> 8) & 0xFF, (addr >> 0) & 0xFF,
+  };
+  for (size_t i = 0; i < size; i++)
+    op_page_program[4 + i] = data[i];
+  flash_cmd_sized(op_page_program, 4 + size);
+  // Wait for completion (t_PP max. = 3 ms, typ. = 0.4 ms)
+  flash_wait_poll(100);
+}
+
+__attribute__ ((noinline))
+void flash_read(uint32_t addr, uint8_t *data, size_t size)
+{
+  uint8_t op_read_data[] = {
+    0x03, // Read Data
+    (addr >> 16) & 0xFF, (addr >> 8) & 0xFF, (addr >> 0) & 0xFF,
+  };
+  flash_cmd_bi_sized(op_read_data, sizeof op_read_data, data, size);
+}
+
+void flash_read_dma(uint32_t addr, uint8_t *data, size_t size)
+{
+  uint8_t op_read_data[] = {
+    0x03, // Read Data
+    (addr >> 16) & 0xFF, (addr >> 8) & 0xFF, (addr >> 0) & 0xFF,
+  };
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 16;
+  spi2_transmit(op_read_data, sizeof op_read_data);
+  HAL_SPI_TransmitReceive_DMA(&spi2, data, data, size);
+  while (spi2.Instance->SR & SPI_SR_BSY) { }
+  W25Q_CS_PORT->BSRR = (uint32_t)W25Q_CS_PIN << 0;
+}
+
+uint8_t flash_test_write_buf[256 * 8];
+
+__attribute__ ((noinline))
+void flash_test_write(uint32_t addr, size_t size)
+{
+  for (uint32_t block_start = 0; block_start < size; block_start += 256) {
+    uint32_t block_size = 256;
+    if (block_start + block_size >= size)
+      block_size = size - block_start;
+    flash_write_page(
+      addr + block_start,
+      flash_test_write_buf + block_start,
+      block_size
+    );
+  }
+}
+
+void flash_test_write_breakpoint()
+{
+  swv_printf("all status = %06x\n", flash_status_all());
+  if (*(volatile uint32_t *)flash_test_write_buf == 0x11223344) {
+    uint8_t data[4] = {1, 2, 3, 4};
+    flash_read(0, data, sizeof data);
+    for (int i = 0; i < 4; i++) swv_printf("%d\n", data[i]);
+    flash_erase_4k(0);
+    flash_erase_64k(0);
+    flash_erase_chip();
+    flash_test_write(0, 1);
+  }
+  flash_erase_4k(0);
+  flash_test_write_buf[0] = 1;
+  flash_test_write_buf[1] = 2;
+  flash_test_write_buf[2] = 3;
+  flash_test_write_buf[3] = 4;
+  flash_test_write(2, 4);
+  for (int i = 0; i < 16; i++)
+    swv_printf("%02x%c", flash_test_write_buf[i], i % 8 == 7 ? '\n' : ' ');
+  for (int i = 0; i < 16; i++) flash_test_write_buf[i] = 0;
+  flash_read(0, flash_test_write_buf, 16);
+  for (int i = 0; i < 16; i++)
+    swv_printf("%02x%c", flash_test_write_buf[i], i % 8 == 7 ? '\n' : ' ');
+  while (1) { }
+}
 
 int main()
 {
@@ -153,18 +387,19 @@ int main()
 
   // ======== DMA for I2S ========
   __HAL_RCC_DMA1_CLK_ENABLE();
-  DMA_HandleTypeDef dma_tx;
-  // RM0454, Ch. 9.3.2
-  dma_tx.Instance = DMA1_Channel1;
-  dma_tx.Init.Request = DMA_REQUEST_SPI1_TX;
-  dma_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
-  dma_tx.Init.PeriphInc = DMA_PINC_DISABLE;
-  dma_tx.Init.MemInc = DMA_MINC_ENABLE;
-  dma_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
-  dma_tx.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;
-  dma_tx.Init.Mode = DMA_CIRCULAR;
-  dma_tx.Init.Priority = DMA_PRIORITY_LOW;
-  HAL_DMA_Init(&dma_tx);
+  // RM0454, Ch. 9.3.2 —
+  // DMA channels are multiplexed instead of hard-wired like the 'F103C6
+  DMA_HandleTypeDef dma_i2s1_tx;
+  dma_i2s1_tx.Instance = DMA1_Channel1;
+  dma_i2s1_tx.Init.Request = DMA_REQUEST_SPI1_TX;
+  dma_i2s1_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
+  dma_i2s1_tx.Init.PeriphInc = DMA_PINC_DISABLE;
+  dma_i2s1_tx.Init.MemInc = DMA_MINC_ENABLE;
+  dma_i2s1_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
+  dma_i2s1_tx.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;
+  dma_i2s1_tx.Init.Mode = DMA_CIRCULAR;
+  dma_i2s1_tx.Init.Priority = DMA_PRIORITY_LOW;
+  HAL_DMA_Init(&dma_i2s1_tx);
 
   HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 15, 1);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
@@ -194,19 +429,85 @@ int main()
       .CPOL = I2S_CPOL_LOW,
     },
   };
-  __HAL_LINKDMA(&i2s1, hdmatx, dma_tx);
+  __HAL_LINKDMA(&i2s1, hdmatx, dma_i2s1_tx);
   HAL_I2S_Init(&i2s1);
 
   swv_printf("sys clock = %u\n", HAL_RCC_GetSysClockFreq());
   swv_printf("I2S clock = %u\n", HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_I2S1));
   // 36864000, divider is 36864000 / 16 / 48k = 48
 
+  // ======== DMA for SPI ========
+  DMA_HandleTypeDef dma_spi2_rx;
+  dma_spi2_rx.Instance = DMA1_Channel2;
+  dma_spi2_rx.Init.Request = DMA_REQUEST_SPI1_TX;
+  dma_spi2_rx.Init.Direction = DMA_MEMORY_TO_PERIPH;
+  dma_spi2_rx.Init.PeriphInc = DMA_PINC_DISABLE;
+  dma_spi2_rx.Init.MemInc = DMA_MINC_ENABLE;
+  dma_spi2_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+  dma_spi2_rx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+  dma_spi2_rx.Init.Mode = DMA_NORMAL;
+  dma_spi2_rx.Init.Priority = DMA_PRIORITY_LOW;
+  HAL_DMA_Init(&dma_spi2_rx);
+
+  HAL_NVIC_SetPriority(DMA1_Channel2_3_IRQn, 15, 3);
+  HAL_NVIC_EnableIRQ(DMA1_Channel2_3_IRQn);
+  HAL_NVIC_SetPriority(SPI2_IRQn, 15, 4);
+  HAL_NVIC_EnableIRQ(SPI2_IRQn);
+
+  // ======== SPI ========
+  gpio_init.Pin = GPIO_PIN_0 | GPIO_PIN_3;
+  gpio_init.Mode = GPIO_MODE_AF_PP;
+  gpio_init.Pull = GPIO_PULLUP;
+  gpio_init.Speed = GPIO_SPEED_FREQ_HIGH;
+  gpio_init.Alternate = GPIO_AF0_SPI2;
+  HAL_GPIO_Init(GPIOA, &gpio_init);
+
+  gpio_init.Pin = GPIO_PIN_4;
+  gpio_init.Alternate = GPIO_AF1_SPI2;
+  HAL_GPIO_Init(GPIOA, &gpio_init);
+
+  gpio_init.Pin = W25Q_CS_PIN;
+  gpio_init.Mode = GPIO_MODE_OUTPUT_PP;
+  HAL_GPIO_Init(W25Q_CS_PORT, &gpio_init);
+  HAL_GPIO_WritePin(W25Q_CS_PORT, W25Q_CS_PIN, 1);
+
+  __HAL_RCC_SPI2_CLK_ENABLE();
+  spi2.Instance = SPI2;
+  spi2.Init.Mode = SPI_MODE_MASTER;
+  spi2.Init.Direction = SPI_DIRECTION_2LINES;
+  spi2.Init.CLKPolarity = SPI_POLARITY_LOW; // CPOL = 0
+  spi2.Init.CLKPhase = SPI_PHASE_1EDGE;     // CPHA = 0
+  spi2.Init.NSS = SPI_NSS_SOFT;
+  spi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  spi2.Init.TIMode = SPI_TIMODE_DISABLE;
+  spi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  spi2.Init.DataSize = SPI_DATASIZE_8BIT;
+  spi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;  // APB / 2 = 18.432 MHz
+  __HAL_LINKDMA(&spi2, hdmarx, dma_spi2_rx);
+  HAL_SPI_Init(&spi2);
+  __HAL_SPI_ENABLE(&spi2);
+
+  __HAL_DMA_ENABLE_IT(&dma_spi2_rx, (DMA_IT_TC | DMA_IT_TE));
+  __HAL_DMA_ENABLE(&dma_spi2_rx);
+
+  uint8_t jedec[3], uid[4];
+  flash_id(jedec, uid);
+  // Manufacturer = 0xef (Winbond)
+  // Memory type = 0x40
+  // Capacity = 0x15 (2^21 B = 2 MiB = 16 Mib)
+  swv_printf("MF = %02x\nID = %02x %02x\nUID = %02x%02x%02x%02x\n",
+    jedec[0], jedec[1], jedec[2], uid[0], uid[1], uid[2], uid[3]);
+  flash_test_write_breakpoint();
+
+  while (1) {
+  }
+
   // 480 Hz
   uint16_t data[1000];
   for (int i = 0; i < 1000; i++) data[i] = (i % 100 < 50 ? 4000 : 0);
+  HAL_I2S_Transmit_DMA(&i2s1, data, 1000);
   while (1) {
-    // HAL_I2S_Transmit(&i2s1, data, 100, 1000);
-    HAL_I2S_Transmit_DMA(&i2s1, data, 1000);
+    HAL_I2S_Transmit(&i2s1, data, 100, 1000);
   }
 
   VL53L0X_Dev_t dev;
@@ -302,6 +603,19 @@ void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *i2s1)
   static int count = 0;
   // 128000 samples = 2.67 s
   if ((count = (count + 1) % 128) == 0) swv_printf("! complete\n");
+}
+
+void DMA1_Channel2_3_IRQHandler()
+{
+  HAL_DMA_IRQHandler(spi2.hdmarx);
+}
+void SPI2_IRQHandler()
+{
+  HAL_SPI_IRQHandler(&spi2);
+}
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *spi2)
+{
+  swv_printf("SPI complete\n");
 }
 
 // Platform layer for VL53L0X
