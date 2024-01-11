@@ -48,6 +48,7 @@ static void swv_printf(const char *restrict fmt, ...)
 
 TIM_HandleTypeDef tim14 = { 0 };
 I2C_HandleTypeDef i2c2 = { 0 };
+I2S_HandleTypeDef i2s1 = { 0 };
 
 int main()
 {
@@ -82,7 +83,7 @@ int main()
   osc_init.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   osc_init.HSEState = RCC_HSE_BYPASS;
   osc_init.PLL.PLLState = RCC_PLL_ON;
-  osc_init.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  osc_init.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   osc_init.PLL.PLLM = RCC_PLLM_DIV1;  // VCO input 12.288 MHz (2.66 ~ 16 MHz)
   osc_init.PLL.PLLN = 12;             // VCO output 147.456 MHz (64 ~ 344 MHz)
   osc_init.PLL.PLLP = RCC_PLLP_DIV4;  // PLLPCLK 36.864 MHz
@@ -149,6 +150,41 @@ int main()
     },
   };
   HAL_I2C_Init(&i2c2);
+
+  // ======== I2S ========
+  gpio_init.Pin = GPIO_PIN_5 | GPIO_PIN_7;
+  gpio_init.Mode = GPIO_MODE_AF_PP;
+  gpio_init.Alternate = GPIO_AF0_SPI1;
+  gpio_init.Pull = GPIO_PULLUP;
+  gpio_init.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOA, &gpio_init);
+
+  gpio_init.Pin = GPIO_PIN_0;
+  HAL_GPIO_Init(GPIOB, &gpio_init);
+
+  __HAL_RCC_SPI1_CLK_ENABLE();
+  i2s1 = (I2S_HandleTypeDef){
+    .Instance = SPI1,
+    .Init = {
+      .Mode = I2S_MODE_MASTER_TX,
+      .Standard = I2S_STANDARD_PHILIPS,
+      .DataFormat = I2S_DATAFORMAT_16B,
+      .MCLKOutput = I2S_MCLKOUTPUT_DISABLE,
+      .AudioFreq = I2S_AUDIOFREQ_48K,
+      .CPOL = I2S_CPOL_LOW,
+    },
+  };
+  HAL_I2S_Init(&i2s1);
+
+  swv_printf("sys clock = %u\n", HAL_RCC_GetSysClockFreq());
+  swv_printf("I2S clock = %u\n", HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_I2S1));
+  // 36864000, divider is 36864000 / 16 / 48k = 48
+
+  uint16_t data[100]; // 480 Hz
+  for (int i = 0; i < 100; i++) data[i] = (i < 50 ? 4000 : 0);
+  while (1) {
+    HAL_I2S_Transmit(&i2s1, data, 100, 1000);
+  }
 
   VL53L0X_Dev_t dev;
   VL53L0X_Error err;
