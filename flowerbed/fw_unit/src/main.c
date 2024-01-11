@@ -1,4 +1,6 @@
 #include <stm32g0xx_hal.h>
+#include "vl53l0x/vl53l0x_api.h"
+
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -160,6 +162,43 @@ int main()
     }
   }
 
+  VL53L0X_Dev_t dev;
+  VL53L0X_Error err;
+
+  err = VL53L0X_DataInit(&dev);
+  if (err != VL53L0X_ERROR_NONE) swv_printf("err1 = %d\n", (int)err);
+  uint16_t osc_cal = 0x97AA;
+  err = VL53L0X_RdWord(&dev, VL53L0X_REG_OSC_CALIBRATE_VAL, &osc_cal);
+  if (err != VL53L0X_ERROR_NONE) swv_printf("err2 = %d\n", (int)err);
+  swv_printf("osc_cal = %04x\n", (int)err, (unsigned)osc_cal);
+  err = VL53L0X_StaticInit(&dev);
+  if (err != VL53L0X_ERROR_NONE) swv_printf("err3 = %d\n", (int)err);
+  uint32_t ref_spad_cnt;
+  uint8_t is_ap_spads;
+  err = VL53L0X_PerformRefSpadManagement(&dev, &ref_spad_cnt, &is_ap_spads);
+  if (err != VL53L0X_ERROR_NONE) swv_printf("err4 = %d\n", (int)err);
+  swv_printf("ref_spad_cnt = %08x, is_ap_spads = %02x\n", (unsigned)ref_spad_cnt, (unsigned)is_ap_spads);
+  uint8_t vhv_settings, phase_cal;
+  err = VL53L0X_PerformRefCalibration(&dev, &vhv_settings, &phase_cal);
+  if (err != VL53L0X_ERROR_NONE) swv_printf("err5 = %d\n", (int)err);
+  swv_printf("vhv_settings = %02x, phase_cal = %02x\n", (unsigned)vhv_settings, (unsigned)phase_cal);
+
+  err = VL53L0X_SetDeviceMode(&dev, VL53L0X_DEVICEMODE_SINGLE_RANGING);
+  while (1) {
+    VL53L0X_StartMeasurement(&dev);
+    uint8_t ready;
+    do {
+      VL53L0X_GetMeasurementDataReady(&dev, &ready);
+    } while (!ready);
+    VL53L0X_RangingMeasurementData_t meas;
+    VL53L0X_Error err = VL53L0X_GetRangingMeasurementData(&dev, &meas);
+    swv_printf("err = %d, range = %u mm / %u mm, rg status = %d\n",
+      (int)err, (unsigned)meas.RangeMilliMeter, (unsigned)meas.RangeDMaxMilliMeter, (int)meas.RangeStatus);
+    // err = 0, range = 400 mm / 1174 mm, rg status = 0
+    // err = 0, range = 8190 mm / 1174 mm, rg status = 4
+    HAL_Delay(100);
+  }
+
   while (1) { }
 }
 
@@ -177,6 +216,81 @@ void TIM14_IRQHandler()
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *tim14)
 {
   static uint32_t count = 0, parity = 0;
-  swv_printf("timer\n");
   HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, parity ^= 1);
+}
+
+VL53L0X_Error VL53L0X_LockSequenceAccess(VL53L0X_DEV Dev)
+{
+  return VL53L0X_ERROR_NONE;
+}
+
+VL53L0X_Error VL53L0X_UnlockSequenceAccess(VL53L0X_DEV Dev)
+{
+  return VL53L0X_ERROR_NONE;
+}
+
+VL53L0X_Error VL53L0X_WriteMulti(VL53L0X_DEV Dev, uint8_t index, uint8_t *pdata, uint32_t count)
+{
+  HAL_I2C_Mem_Write(&i2c2, 0x29 << 1, index, I2C_MEMADD_SIZE_8BIT, pdata, count, 1000);
+  return VL53L0X_ERROR_NONE;
+}
+
+VL53L0X_Error VL53L0X_ReadMulti(VL53L0X_DEV Dev, uint8_t index, uint8_t *pdata, uint32_t count)
+{
+  HAL_I2C_Mem_Read(&i2c2, 0x29 << 1, index, I2C_MEMADD_SIZE_8BIT, pdata, count, 1000);
+  return VL53L0X_ERROR_NONE;
+}
+
+VL53L0X_Error VL53L0X_WrByte(VL53L0X_DEV Dev, uint8_t index, uint8_t data)
+{
+  HAL_I2C_Mem_Write(&i2c2, 0x29 << 1, index, I2C_MEMADD_SIZE_8BIT, &data, 1, 1000);
+  return VL53L0X_ERROR_NONE;
+}
+
+VL53L0X_Error VL53L0X_WrWord(VL53L0X_DEV Dev, uint8_t index, uint16_t data)
+{
+  data = __builtin_bswap16(data);
+  HAL_I2C_Mem_Write(&i2c2, 0x29 << 1, index, I2C_MEMADD_SIZE_8BIT, (uint8_t *)&data, 2, 1000);
+  return VL53L0X_ERROR_NONE;
+}
+
+VL53L0X_Error VL53L0X_WrDWord(VL53L0X_DEV Dev, uint8_t index, uint32_t data)
+{
+  data = __builtin_bswap32(data);
+  HAL_I2C_Mem_Write(&i2c2, 0x29 << 1, index, I2C_MEMADD_SIZE_8BIT, (uint8_t *)&data, 4, 1000);
+  return VL53L0X_ERROR_NONE;
+}
+
+VL53L0X_Error VL53L0X_RdByte(VL53L0X_DEV Dev, uint8_t index, uint8_t *data)
+{
+  HAL_I2C_Mem_Read(&i2c2, 0x29 << 1, index, I2C_MEMADD_SIZE_8BIT, data, 1, 1000);
+  return VL53L0X_ERROR_NONE;
+}
+
+VL53L0X_Error VL53L0X_RdWord(VL53L0X_DEV Dev, uint8_t index, uint16_t *data)
+{
+  HAL_I2C_Mem_Read(&i2c2, 0x29 << 1, index, I2C_MEMADD_SIZE_8BIT, (uint8_t *)data, 2, 1000);
+  *data = __builtin_bswap16(*data);
+  return VL53L0X_ERROR_NONE;
+}
+
+VL53L0X_Error VL53L0X_RdDWord(VL53L0X_DEV Dev, uint8_t index, uint32_t *data)
+{
+  HAL_I2C_Mem_Read(&i2c2, 0x29 << 1, index, I2C_MEMADD_SIZE_8BIT, (uint8_t *)data, 4, 1000);
+  *data = __builtin_bswap32(*data);
+  return VL53L0X_ERROR_NONE;
+}
+
+VL53L0X_Error VL53L0X_UpdateByte(VL53L0X_DEV Dev, uint8_t index, uint8_t AndData, uint8_t OrData)
+{
+  uint8_t x;
+  HAL_I2C_Mem_Read(&i2c2, 0x29 << 1, index, I2C_MEMADD_SIZE_8BIT, &x, 1, 1000);
+  x = (x & AndData) | OrData;
+  HAL_I2C_Mem_Write(&i2c2, 0x29 << 1, index, I2C_MEMADD_SIZE_8BIT, &x, 1, 1000);
+  return VL53L0X_ERROR_NONE;
+}
+
+VL53L0X_Error VL53L0X_PollingDelay(VL53L0X_DEV Dev)
+{
+  return VL53L0X_ERROR_NONE;
 }
