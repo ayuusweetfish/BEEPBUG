@@ -137,16 +137,22 @@ int main()
   i2c2 = (I2C_HandleTypeDef){
     .Instance = I2C2,
     .Init = {
-      // RM0454 Rev 5, pp. 711, 726, 738 (examples), 766
-      // APB = 36.864 MHz, f_SCL = __ kHz
-      // PRESC = 15, SCLDEL = 0x4, SDADEL = 0x2,
-      // SCLH = 0x0F, SCLH = 0x0F, SCLL = 0x13
-      .Timing = 0xF0420F13,
+      // RM0454 Rev 5, pp. 711, 726, 738 (examples), 766 (reg. map)
+      // APB = 36.864 MHz
+      // f_SCL = 368.64 kHz = APB / 100
+      // PRESC = 9 (scaled clock APB / 10 = 0.2713 µs)
+      // SCLDEL = 0x1, SDADEL = 0x1,
+      // SCLH = 0x03 (0.8138 µs > 0.6 µs), SCLL = 0x05 (1.356 µs > 1.3 µs)
+      .Timing = 0x90110305,
       .OwnAddress1 = 0x00,
       .AddressingMode = I2C_ADDRESSINGMODE_7BIT,
     },
   };
   HAL_I2C_Init(&i2c2);
+
+  VL53L0X_Dev_t dev;
+  VL53L0X_Error err;
+  VL53L0X_ResetDevice(&dev);
 
   // Verify reference registers for VL53L0X
   uint8_t ref_reg[3] = {0x01, 0x02, 0x03};
@@ -161,9 +167,6 @@ int main()
       HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 0); HAL_Delay(100);
     }
   }
-
-  VL53L0X_Dev_t dev;
-  VL53L0X_Error err;
 
   err = VL53L0X_DataInit(&dev);
   if (err != VL53L0X_ERROR_NONE) swv_printf("err1 = %d\n", (int)err);
@@ -183,9 +186,11 @@ int main()
   if (err != VL53L0X_ERROR_NONE) swv_printf("err5 = %d\n", (int)err);
   swv_printf("vhv_settings = %02x, phase_cal = %02x\n", (unsigned)vhv_settings, (unsigned)phase_cal);
 
-  err = VL53L0X_SetDeviceMode(&dev, VL53L0X_DEVICEMODE_SINGLE_RANGING);
+  err = VL53L0X_SetDeviceMode(&dev, VL53L0X_DEVICEMODE_CONTINUOUS_RANGING);
+  if (err != VL53L0X_ERROR_NONE) swv_printf("err6 = %d\n", (int)err);
+  err = VL53L0X_StartMeasurement(&dev);
+  if (err != VL53L0X_ERROR_NONE) swv_printf("err7 = %d\n", (int)err);
   while (1) {
-    VL53L0X_StartMeasurement(&dev);
     uint8_t ready;
     do {
       VL53L0X_GetMeasurementDataReady(&dev, &ready);
