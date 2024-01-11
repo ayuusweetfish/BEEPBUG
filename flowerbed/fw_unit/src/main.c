@@ -45,6 +45,7 @@ static void swv_printf(const char *restrict fmt, ...)
 #endif
 
 TIM_HandleTypeDef tim14 = { 0 };
+I2C_HandleTypeDef i2c2 = { 0 };
 
 int main()
 {
@@ -121,6 +122,43 @@ int main()
   __HAL_TIM_ENABLE_IT(&tim14, TIM_IT_UPDATE);
   HAL_NVIC_SetPriority(TIM14_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(TIM14_IRQn);
+
+  // ======== I2C ========
+  gpio_init.Pin = GPIO_PIN_11 | GPIO_PIN_12;
+  gpio_init.Mode = GPIO_MODE_AF_PP;
+  gpio_init.Alternate = GPIO_AF6_I2C2;
+  gpio_init.Pull = GPIO_NOPULL;
+  gpio_init.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOA, &gpio_init);
+
+  __HAL_RCC_I2C2_CLK_ENABLE();
+  i2c2 = (I2C_HandleTypeDef){
+    .Instance = I2C2,
+    .Init = {
+      // RM0454 Rev 5, pp. 711, 726, 738 (examples), 766
+      // APB = 36.864 MHz, f_SCL = __ kHz
+      // PRESC = 15, SCLDEL = 0x4, SDADEL = 0x2,
+      // SCLH = 0x0F, SCLH = 0x0F, SCLL = 0x13
+      .Timing = 0xF0420F13,
+      .OwnAddress1 = 0x00,
+      .AddressingMode = I2C_ADDRESSINGMODE_7BIT,
+    },
+  };
+  HAL_I2C_Init(&i2c2);
+
+  // Verify reference registers for VL53L0X
+  uint8_t ref_reg[3] = {0x01, 0x02, 0x03};
+  HAL_StatusTypeDef result_ref =
+    HAL_I2C_Mem_Read(&i2c2, 0x29 << 1, 0xC0, I2C_MEMADD_SIZE_8BIT, ref_reg, 3, 1000);
+  if (result_ref != HAL_OK ||
+      ref_reg[0] != 0xEE || ref_reg[1] != 0xAA || ref_reg[2] != 0x10) {
+    swv_printf("%d %d %02x %02x %02x\n", (int)result_ref, (int)i2c2.ErrorCode,
+      (unsigned)ref_reg[0], (unsigned)ref_reg[1], (unsigned)ref_reg[2]);
+    while (1) {
+      HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 1); HAL_Delay(100);
+      HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 0); HAL_Delay(100);
+    }
+  }
 
   while (1) { }
 }
