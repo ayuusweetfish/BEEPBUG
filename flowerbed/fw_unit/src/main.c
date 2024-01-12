@@ -297,19 +297,27 @@ static qoa_lms audio_dec_state;
 // Block counter, resets at 256
 static uint16_t audio_block_ctr = 256;
 
-static inline void audio_read_start()
+static void audio_read_start()
 {
   audio_read_in_progress = true;
+  if (audio_compressed_addr + (128 / 2) * 8 >= 193504) {
+    for (int i = 0; i < 480; i++) audio_pcm_buf[i] = 0;
+    while (1) {
+      HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 1); HAL_Delay(200);
+      HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 0); HAL_Delay(100);
+    }
+  }
   uint64_t *data = audio_compressed_buf + (audio_compressed_half ? 128 / 2 : 0);
   flash_read_dma(audio_compressed_addr, (uint8_t *)data, 128 / 2 * 8);
   audio_compressed_addr += (128 / 2) * 8;
 }
-static inline void audio_read_mark_end()
+static void audio_read_mark_end()
 {
   uint64_t *data = audio_compressed_buf + (audio_compressed_half ? 128 / 2 : 0);
   for (int i = 0; i < 128 / 2; i++)
     data[i] = __builtin_bswap64(data[i]);
   // 64-bit printing might not be supported
+/*
   swv_printf("data offset %08x -> half %d:\n",
     audio_compressed_addr - (128 / 2) * 8, (int)audio_compressed_half);
   for (int i = 0; i < 16; i++)
@@ -317,10 +325,11 @@ static inline void audio_read_mark_end()
       (uint32_t)(data[i] >> 32),
       (uint32_t)(data[i] >> 0),
       i % 4 == 3 ? '\n' : ' ');
+*/
   audio_compressed_half ^= 1;
   audio_read_in_progress = false;
 }
-static inline void audio_decode(uint8_t into_half)
+static void audio_decode(uint8_t into_half)
 {
   if (audio_read_in_progress) {
     swv_printf("! decode requested while data read in progress\n");
@@ -346,10 +355,12 @@ static inline void audio_decode(uint8_t into_half)
         audio_dec_state.history[i] = (int16_t)(data[0] >> (16 * (3 - i)));
       for (int i = 0; i < 4; i++)
         audio_dec_state.weights[i] = (int16_t)(data[1] >> (16 * (3 - i)));
+    /*
       swv_printf("Reload (at offset %08x): %08x%08x %08x%08x\n",
         data - audio_compressed_buf,
         (uint32_t)(data[0] >> 32), (uint32_t)(data[0] >> 0),
         (uint32_t)(data[1] >> 32), (uint32_t)(data[1] >> 0));
+    */
       data += 2;
       if (data == data_half_end) {
         start_new_read = true;
@@ -361,6 +372,8 @@ static inline void audio_decode(uint8_t into_half)
       audio_block_ctr = 0;
     }
     qoa_decode_slice(&audio_dec_state, *data, pcm);
+    for (int i = 0; i < 20; i++)
+      pcm[i] >>= 2;
     /* if (n_called == 6 || start_new_read) {
       swv_printf("data: %08x%08x\ndecoded: ",
         (uint32_t)(data[0] >> 32), (uint32_t)(data[0] >> 0));
@@ -622,6 +635,9 @@ int main()
   while (audio_read_in_progress) { }
   audio_read_start();
   while (audio_read_in_progress) { }
+  audio_decode(0);
+  audio_decode(1);
+/*
   for (int i = 0; i < 80; i++) {
     audio_decode(0);
     swv_printf("== %08x (sample %d) ==\n", 240 * i * 2, 240 * i);
@@ -630,14 +646,17 @@ int main()
   }
 
   while (1) { }
+*/
 
   // 480 Hz
+  HAL_I2S_Transmit_DMA(&i2s1, (uint16_t *)audio_pcm_buf, 480);
+/*
   uint16_t data[1000];
   for (int i = 0; i < 1000; i++) data[i] = (i % 100 < 50 ? 4000 : 0);
-  HAL_I2S_Transmit_DMA(&i2s1, data, 1000);
   while (1) {
     HAL_I2S_Transmit(&i2s1, data, 100, 1000);
   }
+*/
 
   VL53L0X_Dev_t dev;
   VL53L0X_Error err;
@@ -726,12 +745,16 @@ void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *i2s1)
   static int count = 0;
   // 128000 samples = 2.67 s
   if ((count = (count + 1) % 128) == 0) swv_printf("! half\n");
+
+  audio_decode(0);
 }
 void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *i2s1)
 {
   static int count = 0;
   // 128000 samples = 2.67 s
   if ((count = (count + 1) % 128) == 0) swv_printf("! complete\n");
+
+  audio_decode(1);
 }
 
 void DMA1_Channel2_3_IRQHandler()
