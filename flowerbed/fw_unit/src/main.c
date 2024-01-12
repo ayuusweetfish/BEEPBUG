@@ -279,49 +279,77 @@ void flash_test_write_breakpoint()
   while (1) { }
 }
 
+// Audio data address range
+static uint32_t audio_compressed_addr_start, audio_compressed_addr_end;
 // Buffer for raw data
-static uint64_t audio_compressed_buf[128];
+#define N_AUDIO_COMPR_BUF 128
+static uint64_t audio_compressed_buf[N_AUDIO_COMPR_BUF];
 // Next address for reading
 static uint32_t audio_compressed_addr;
 // Whether the read is in progress
 static volatile bool audio_read_in_progress = 0;
 // Which half of the raw data the next read should target
-static uint8_t audio_compressed_half = 0;
+static uint8_t audio_compressed_half;
 // Raw data consumption pointer (into the entire buffer, without knowledge of the halves)
-static size_t audio_compressed_ptr = 0;
+static size_t audio_compressed_ptr;
 
 typedef struct __attribute__ ((packed, aligned(4))) { int16_t l, r; } stereo_sample_t;
 static inline stereo_sample_t sample(int16_t x) { return (stereo_sample_t){x, x}; }
 // Buffer for decoded samples
-static stereo_sample_t audio_pcm_buf[480];
+#define N_AUDIO_PCM_BUF 480
+static stereo_sample_t audio_pcm_buf[N_AUDIO_PCM_BUF];
 // Decoder state
 static qoa_lms audio_dec_state;
 // Block counter, resets at 256
-static uint16_t audio_block_ctr = 256;
+static uint16_t audio_block_ctr;
+
+static void audio_read_start();
+static void audio_decode(uint8_t into_half);
+static void audio_playback_init(uint32_t addr_start, uint32_t addr_end)
+{
+  audio_compressed_addr_start = addr_start;
+  audio_compressed_addr_end = addr_end;
+  audio_compressed_addr = audio_compressed_addr_start;
+  audio_compressed_half = 0;
+  audio_compressed_ptr = 0;
+  audio_block_ctr = 256;
+
+  // Read the first samples and decode
+  while (audio_read_in_progress) { }
+  audio_read_start();
+  while (audio_read_in_progress) { }
+  audio_read_start();
+  while (audio_read_in_progress) { }
+  audio_decode(0);
+  audio_decode(1);
+}
 
 static void audio_read_start()
 {
   audio_read_in_progress = true;
-  if (audio_compressed_addr + (128 / 2) * 8 >= 193504) {
-    for (int i = 0; i < 480; i++) audio_pcm_buf[i] = sample(0);
+  if (audio_compressed_addr + (N_AUDIO_COMPR_BUF / 2) * 8 >= audio_compressed_addr_end) {
+    for (int i = 0; i < N_AUDIO_PCM_BUF; i++) audio_pcm_buf[i] = sample(0);
     while (1) {
       HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 1); HAL_Delay(200);
       HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 0); HAL_Delay(100);
     }
   }
-  uint64_t *data = audio_compressed_buf + (audio_compressed_half ? 128 / 2 : 0);
-  flash_read_dma(audio_compressed_addr, (uint8_t *)data, 128 / 2 * 8);
-  audio_compressed_addr += (128 / 2) * 8;
+  uint64_t *data = audio_compressed_buf +
+    (audio_compressed_half ? N_AUDIO_COMPR_BUF / 2 : 0);
+  flash_read_dma(audio_compressed_addr,
+    (uint8_t *)data, N_AUDIO_COMPR_BUF / 2 * 8);
+  audio_compressed_addr += (N_AUDIO_COMPR_BUF / 2) * 8;
 }
 static void audio_read_mark_end()
 {
-  uint64_t *data = audio_compressed_buf + (audio_compressed_half ? 128 / 2 : 0);
-  for (int i = 0; i < 128 / 2; i++)
+  uint64_t *data = audio_compressed_buf +
+    (audio_compressed_half ? N_AUDIO_COMPR_BUF / 2 : 0);
+  for (int i = 0; i < N_AUDIO_COMPR_BUF / 2; i++)
     data[i] = __builtin_bswap64(data[i]);
-  // 64-bit printing might not be supported
 /*
+  // 64-bit printing might not be supported
   swv_printf("data offset %08x -> half %d:\n",
-    audio_compressed_addr - (128 / 2) * 8, (int)audio_compressed_half);
+    audio_compressed_addr - (N_AUDIO_COMPR_BUF / 2) * 8, (int)audio_compressed_half);
   for (int i = 0; i < 16; i++)
     swv_printf("%08x%08x%c",
       (uint32_t)(data[i] >> 32),
@@ -341,13 +369,13 @@ static void audio_decode(uint8_t into_half)
   static int n_called = -1;
   n_called++;
 
-  const size_t buffer_half_sz = (sizeof audio_pcm_buf / sizeof audio_pcm_buf[0]) / 2;
+  const size_t buffer_half_sz = N_AUDIO_PCM_BUF / 2;
   const size_t n_blocks = buffer_half_sz / 20;
 
   uint64_t *data = audio_compressed_buf + audio_compressed_ptr;
   stereo_sample_t *pcm = audio_pcm_buf + (into_half ? buffer_half_sz : 0);
   uint64_t *data_half_end =
-    audio_compressed_buf + (audio_compressed_half + 1) * (128 / 2);
+    audio_compressed_buf + (audio_compressed_half + 1) * (N_AUDIO_COMPR_BUF / 2);
   bool start_new_read = false;
 
   for (int i = 0; i < n_blocks; i++) {
@@ -633,25 +661,13 @@ int main()
     jedec[0], jedec[1], jedec[2], uid[0], uid[1], uid[2], uid[3]);
   // flash_test_write_breakpoint();
 
-  // Read the first samples and decode
-  audio_read_start();
-  while (audio_read_in_progress) { }
-  audio_read_start();
-  while (audio_read_in_progress) { }
-  audio_decode(0);
-  audio_decode(1);
-/*
-  for (int i = 0; i < 80; i++) {
-    audio_decode(0);
-    swv_printf("== %08x (sample %d) ==\n", 240 * i * 2, 240 * i);
-    for (int j = 0; j < (i >= 5 && 0 ? 240 : 24); j++)
-      swv_printf("%04x%c", (unsigned)(uint16_t)audio_pcm_buf[j], j % 8 == 7 ? '\n' : ' ');
+  audio_playback_init(0, 193504);
+  HAL_I2S_Transmit_DMA(&i2s1, (uint16_t *)audio_pcm_buf, N_AUDIO_PCM_BUF * 2);
+
+  while (1) {
+    HAL_Delay(3000);
+    audio_playback_init(0, 193504);
   }
-
-  while (1) { }
-*/
-
-  HAL_I2S_Transmit_DMA(&i2s1, (uint16_t *)audio_pcm_buf, 480 * 2);
 /*
   // 480 Hz
   uint16_t data[1000];
