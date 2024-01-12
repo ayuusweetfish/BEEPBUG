@@ -269,18 +269,6 @@ void flash_test_write_breakpoint()
     flash_erase_chip();
     flash_test_write(0, 1);
   }
-  flash_erase_4k(0);
-  flash_test_write_buf[0] = 1;
-  flash_test_write_buf[1] = 2;
-  flash_test_write_buf[2] = 3;
-  flash_test_write_buf[3] = 4;
-  flash_test_write(2, 4);
-  for (int i = 0; i < 16; i++)
-    swv_printf("%02x%c", flash_test_write_buf[i], i % 8 == 7 ? '\n' : ' ');
-  for (int i = 0; i < 16; i++) flash_test_write_buf[i] = 0;
-  flash_read(0, flash_test_write_buf, 16);
-  for (int i = 0; i < 16; i++)
-    swv_printf("%02x%c", flash_test_write_buf[i], i % 8 == 7 ? '\n' : ' ');
   while (1) { }
 }
 
