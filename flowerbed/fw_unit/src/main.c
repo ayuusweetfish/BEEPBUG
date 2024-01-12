@@ -303,6 +303,9 @@ static qoa_lms audio_dec_state;
 // Block counter, resets at 256
 static uint16_t audio_block_ctr;
 
+// Volume (12-bit fixed point, 4096 corresponds to unity gain)
+static volatile uint16_t audio_volume;
+
 // 0 - normal running
 // 1 - `audio_playback_init()` would like the running thread to hold
 // 2 - the running thread (through `audio_decode()` has stopped all processing)
@@ -388,6 +391,7 @@ static void audio_decode(uint8_t into_half, bool ignore_hold_state)
   stereo_sample_t *pcm = audio_pcm_buf + (into_half ? buffer_half_sz : 0);
   uint64_t *data_half_end =
     audio_compressed_buf + (audio_compressed_half + 1) * (N_AUDIO_COMPR_BUF / 2);
+  uint16_t vol = audio_volume;
   bool start_new_read = false;
 
   for (int i = 0; i < n_blocks; i++) {
@@ -416,7 +420,7 @@ static void audio_decode(uint8_t into_half, bool ignore_hold_state)
     int16_t decoded_pcm[20];
     qoa_decode_slice(&audio_dec_state, *data, decoded_pcm);
     for (int i = 0; i < 20; i++)
-      pcm[i] = sample(decoded_pcm[i] >> 2);
+      pcm[i] = sample(((int32_t)decoded_pcm[i] * vol) >> 12);
     /* if (n_called == 6 || start_new_read) {
       swv_printf("data: %08x%08x\ndecoded: ",
         (uint32_t)(data[0] >> 32), (uint32_t)(data[0] >> 0));
@@ -677,18 +681,13 @@ int main()
   for (int i = 0; i < N_AUDIO_PCM_BUF; i++) audio_pcm_buf[i] = sample(0);
   HAL_I2S_Transmit_DMA(&i2s1, (uint16_t *)audio_pcm_buf, N_AUDIO_PCM_BUF * 2);
 
+  audio_volume = 1024;
   audio_playback_init(0, 193504);
 
+/*
   while (1) {
     HAL_Delay(3000);
     audio_playback_init(0, 193504);
-  }
-/*
-  // 480 Hz
-  uint16_t data[1000];
-  for (int i = 0; i < 1000; i++) data[i] = (i % 100 < 50 ? 4000 : 0);
-  while (1) {
-    HAL_I2S_Transmit(&i2s1, data, 100, 1000);
   }
 */
 
@@ -744,6 +743,12 @@ int main()
     // err = 0, range = 400 mm / 1174 mm, rg status = 0
     // err = 0, range = 8190 mm / 1174 mm, rg status = 4
     HAL_Delay(100);
+
+    uint16_t vol = audio_volume;
+    int32_t target_vol = 1024 * (meas.RangeMilliMeter - 100) / (500 - 100);
+    if (target_vol >= 1024) target_vol = 1024;
+    else if (target_vol < 0) target_vol = 0;
+    audio_volume = vol + (int32_t)(target_vol - vol) * 25 / 100;
   }
 
   while (1) { }
