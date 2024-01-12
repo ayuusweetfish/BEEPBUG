@@ -303,10 +303,19 @@ static qoa_lms audio_dec_state;
 // Block counter, resets at 256
 static uint16_t audio_block_ctr;
 
+// 0 - normal running
+// 1 - `audio_playback_init()` would like the running thread to hold
+// 2 - the running thread (through `audio_decode()` has stopped all processing)
+static volatile uint8_t audio_hold_state;
+
 static void audio_read_start();
-static void audio_decode(uint8_t into_half);
+static void audio_decode(uint8_t into_half, bool ignore_hold_state);
 static void audio_playback_init(uint32_t addr_start, uint32_t addr_end)
 {
+  // Raise a flag for 
+  audio_hold_state = 1;
+  while (audio_hold_state != 2) { }
+
   audio_compressed_addr_start = addr_start;
   audio_compressed_addr_end = addr_end;
   audio_compressed_addr = audio_compressed_addr_start;
@@ -320,8 +329,10 @@ static void audio_playback_init(uint32_t addr_start, uint32_t addr_end)
   while (audio_read_in_progress) { }
   audio_read_start();
   while (audio_read_in_progress) { }
-  audio_decode(0);
-  audio_decode(1);
+  audio_decode(0, true);
+  audio_decode(1, true);
+
+  audio_hold_state = 0;
 }
 
 static void audio_read_start()
@@ -359,15 +370,16 @@ static void audio_read_mark_end()
   audio_compressed_half ^= 1;
   audio_read_in_progress = false;
 }
-static void audio_decode(uint8_t into_half)
+static void audio_decode(uint8_t into_half, bool ignore_hold_state)
 {
   if (audio_read_in_progress) {
     swv_printf("! decode requested while data read in progress\n");
     return;
   }
-
-  static int n_called = -1;
-  n_called++;
+  if (!ignore_hold_state && (audio_hold_state == 1 || audio_hold_state == 2)) {
+    audio_hold_state = 2;
+    return;
+  }
 
   const size_t buffer_half_sz = N_AUDIO_PCM_BUF / 2;
   const size_t n_blocks = buffer_half_sz / 20;
@@ -661,8 +673,11 @@ int main()
     jedec[0], jedec[1], jedec[2], uid[0], uid[1], uid[2], uid[3]);
   // flash_test_write_breakpoint();
 
-  audio_playback_init(0, 193504);
+  audio_hold_state = 0;
+  for (int i = 0; i < N_AUDIO_PCM_BUF; i++) audio_pcm_buf[i] = sample(0);
   HAL_I2S_Transmit_DMA(&i2s1, (uint16_t *)audio_pcm_buf, N_AUDIO_PCM_BUF * 2);
+
+  audio_playback_init(0, 193504);
 
   while (1) {
     HAL_Delay(3000);
@@ -765,7 +780,7 @@ void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *i2s1)
   // 128000 samples = 2.67 s
   if ((count = (count + 1) % 128) == 0) swv_printf("! half\n");
 
-  audio_decode(0);
+  audio_decode(0, false);
 }
 void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *i2s1)
 {
@@ -773,7 +788,7 @@ void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *i2s1)
   // 128000 samples = 2.67 s
   if ((count = (count + 1) % 128) == 0) swv_printf("! complete\n");
 
-  audio_decode(1);
+  audio_decode(1, false);
 }
 
 void DMA1_Channel2_3_IRQHandler()
