@@ -9,13 +9,17 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#define MANUFACTURE 0
+#define BEEP 1
+#define BUG 0
+
 #define ACT_LED_PORT  GPIOC
 #define ACT_LED_PIN   GPIO_PIN_15
 
 #define W25Q_CS_PORT  GPIOA
 #define W25Q_CS_PIN   GPIO_PIN_2
 
-#define RELEASE
+// #define RELEASE
 #ifndef RELEASE
 static uint8_t swv_buf[256];
 static size_t swv_buf_ptr = 0;
@@ -688,14 +692,26 @@ int main()
   // Capacity = 0x15 (2^21 B = 2 MiB = 16 Mib)
   swv_printf("MF = %02x\nID = %02x %02x\nUID = %02x%02x%02x%02x\n",
     jedec[0], jedec[1], jedec[2], uid[0], uid[1], uid[2], uid[3]);
-  // flash_test_write_breakpoint();
+#if MANUFACTURE
+  flash_test_write_breakpoint();
+#endif
 
   audio_hold_state = 0;
   for (int i = 0; i < N_AUDIO_PCM_BUF; i++) audio_pcm_buf[i] = sample(0);
   HAL_I2S_Transmit_DMA(&i2s1, (uint16_t *)audio_pcm_buf, N_AUDIO_PCM_BUF * 2);
 
+  const int FILE_END =
+#if BEEP
+  504808
+#elif BUG
+  193504
+#else
+  0
+#endif
+  ;
+
   audio_volume = 1024;
-  audio_playback_init(0, 193504 - 193504 % ((N_AUDIO_COMPR_BUF / 2) * 8));
+  audio_playback_init(0, FILE_END - FILE_END % ((N_AUDIO_COMPR_BUF / 2) * 8));
 
 /*
   while (1) {
