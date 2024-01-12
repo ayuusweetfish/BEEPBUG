@@ -15,7 +15,7 @@
 #define W25Q_CS_PORT  GPIOA
 #define W25Q_CS_PIN   GPIO_PIN_2
 
-// #define RELEASE
+#define RELEASE
 #ifndef RELEASE
 static uint8_t swv_buf[256];
 static size_t swv_buf_ptr = 0;
@@ -286,6 +286,9 @@ static uint32_t audio_compressed_addr_start, audio_compressed_addr_end;
 static uint64_t audio_compressed_buf[N_AUDIO_COMPR_BUF];
 // Next address for reading
 static uint32_t audio_compressed_addr;
+// Whether the decoder state should be reset
+// the next time the half-buffer boundary is passed
+static uint8_t audio_compressed_next_reset;
 // Whether the read is in progress
 static volatile bool audio_read_in_progress = 0;
 // Which half of the raw data the next read should target
@@ -322,6 +325,7 @@ static void audio_playback_init(uint32_t addr_start, uint32_t addr_end)
   audio_compressed_addr_start = addr_start;
   audio_compressed_addr_end = addr_end;
   audio_compressed_addr = audio_compressed_addr_start;
+  audio_compressed_next_reset = 0;
   audio_compressed_half = 0;
   audio_compressed_ptr = 0;
   audio_block_ctr = 256;
@@ -341,12 +345,9 @@ static void audio_playback_init(uint32_t addr_start, uint32_t addr_end)
 static void audio_read_start()
 {
   audio_read_in_progress = true;
-  if (audio_compressed_addr + (N_AUDIO_COMPR_BUF / 2) * 8 >= audio_compressed_addr_end) {
-    for (int i = 0; i < N_AUDIO_PCM_BUF; i++) audio_pcm_buf[i] = sample(0);
-    while (1) {
-      HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 1); HAL_Delay(200);
-      HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 0); HAL_Delay(100);
-    }
+  if (audio_compressed_addr + (N_AUDIO_COMPR_BUF / 2) * 8 > audio_compressed_addr_end) {
+    audio_compressed_addr = audio_compressed_addr_start;
+    audio_compressed_next_reset = 1;
   }
   uint64_t *data = audio_compressed_buf +
     (audio_compressed_half ? N_AUDIO_COMPR_BUF / 2 : 0);
@@ -393,9 +394,12 @@ static void audio_decode(uint8_t into_half, bool ignore_hold_state)
     audio_compressed_buf + (audio_compressed_half + 1) * (N_AUDIO_COMPR_BUF / 2);
   uint16_t vol = audio_volume;
   bool start_new_read = false;
+  bool decoder_reset = false; // Reset due to raw data wrap-around
 
-  for (int i = 0; i < n_blocks; i++) {
-    if (audio_block_ctr == 256) {
+  for (int i = 0; (i < n_blocks || decoder_reset); i++) {
+    // `while` since `decoder_reset` might be raised inside
+    while (decoder_reset || audio_block_ctr == 256) {
+      decoder_reset = false;
       // Load decoder state
       for (int i = 0; i < 4; i++)
         audio_dec_state.history[i] = (int16_t)(data[0] >> (16 * (3 - i)));
@@ -411,12 +415,17 @@ static void audio_decode(uint8_t into_half, bool ignore_hold_state)
       if (data == data_half_end) {
         start_new_read = true;
         if (audio_compressed_half == 1) data = audio_compressed_buf;
+        if (audio_compressed_next_reset) {
+          audio_compressed_next_reset = 0;
+          decoder_reset = true;
+        }
         /* swv_printf("Past half (%d): first value is %08x%08x\n",
           audio_compressed_half,
           (uint32_t)(data[0] >> 32), (uint32_t)(data[0] >> 0)); */
       }
       audio_block_ctr = 0;
     }
+    if (i >= n_blocks) break;
     int16_t decoded_pcm[20];
     qoa_decode_slice(&audio_dec_state, *data, decoded_pcm);
     for (int i = 0; i < 20; i++)
@@ -431,9 +440,13 @@ static void audio_decode(uint8_t into_half, bool ignore_hold_state)
     if (data == data_half_end) {
       start_new_read = true;
       if (audio_compressed_half == 1) data = audio_compressed_buf;
-      /* swv_printf("Past half (%d): first value is %08x%08x\n",
-        audio_compressed_half,
-        (uint32_t)(data[0] >> 32), (uint32_t)(data[0] >> 0)); */
+      if (audio_compressed_next_reset) {
+        audio_compressed_next_reset = 0;
+        decoder_reset = true;
+        /* swv_printf("Past half (%d): next reset, first value is %08x%08x\n",
+          audio_compressed_half,
+          (uint32_t)(data[0] >> 32), (uint32_t)(data[0] >> 0)); */
+      }
     }
     pcm += 20;
     audio_block_ctr += 1;
@@ -682,7 +695,7 @@ int main()
   HAL_I2S_Transmit_DMA(&i2s1, (uint16_t *)audio_pcm_buf, N_AUDIO_PCM_BUF * 2);
 
   audio_volume = 1024;
-  audio_playback_init(0, 193504);
+  audio_playback_init(0, 193504 - 193504 % ((N_AUDIO_COMPR_BUF / 2) * 8));
 
 /*
   while (1) {
@@ -781,18 +794,10 @@ void SPI1_IRQHandler()
 }
 void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *i2s1)
 {
-  static int count = 0;
-  // 128000 samples = 2.67 s
-  if ((count = (count + 1) % 128) == 0) swv_printf("! half\n");
-
   audio_decode(0, false);
 }
 void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *i2s1)
 {
-  static int count = 0;
-  // 128000 samples = 2.67 s
-  if ((count = (count + 1) % 128) == 0) swv_printf("! complete\n");
-
   audio_decode(1, false);
 }
 

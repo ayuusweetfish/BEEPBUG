@@ -106,7 +106,8 @@ void trace_print_module_function(uint32_t module, uint32_t level, uint32_t funct
     #define _LOG_FUNCTION_END_FMT(module, status, fmt, ... ) (void)0
 #endif /* else */
 
-#define VL53L0X_COPYSTRING(str, ...) strcpy(str, ##__VA_ARGS__)
+// #define VL53L0X_COPYSTRING(str, ...) strcpy(str, ##__VA_ARGS__)
+#define VL53L0X_COPYSTRING(str, ...) (void)0
 
 #ifdef __cplusplus
 }

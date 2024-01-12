@@ -211,6 +211,7 @@ VL53L0X_Error VL53L0X_device_read_strobe(VL53L0X_DEV Dev)
 
 }
 
+#pragma GCC optimize ("Os")
 VL53L0X_Error VL53L0X_get_info_from_device(VL53L0X_DEV Dev, uint8_t option)
 {
 
