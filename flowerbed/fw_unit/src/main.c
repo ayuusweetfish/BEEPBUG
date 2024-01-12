@@ -290,8 +290,10 @@ static uint8_t audio_compressed_half = 0;
 // Raw data consumption pointer (into the entire buffer, without knowledge of the halves)
 static size_t audio_compressed_ptr = 0;
 
+typedef struct __attribute__ ((packed, aligned(4))) { int16_t l, r; } stereo_sample_t;
+static inline stereo_sample_t sample(int16_t x) { return (stereo_sample_t){x, x}; }
 // Buffer for decoded samples
-static int16_t audio_pcm_buf[480];
+static stereo_sample_t audio_pcm_buf[480];
 // Decoder state
 static qoa_lms audio_dec_state;
 // Block counter, resets at 256
@@ -301,7 +303,7 @@ static void audio_read_start()
 {
   audio_read_in_progress = true;
   if (audio_compressed_addr + (128 / 2) * 8 >= 193504) {
-    for (int i = 0; i < 480; i++) audio_pcm_buf[i] = 0;
+    for (int i = 0; i < 480; i++) audio_pcm_buf[i] = sample(0);
     while (1) {
       HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 1); HAL_Delay(200);
       HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, 0); HAL_Delay(100);
@@ -343,7 +345,7 @@ static void audio_decode(uint8_t into_half)
   const size_t n_blocks = buffer_half_sz / 20;
 
   uint64_t *data = audio_compressed_buf + audio_compressed_ptr;
-  int16_t *pcm = audio_pcm_buf + (into_half ? buffer_half_sz : 0);
+  stereo_sample_t *pcm = audio_pcm_buf + (into_half ? buffer_half_sz : 0);
   uint64_t *data_half_end =
     audio_compressed_buf + (audio_compressed_half + 1) * (128 / 2);
   bool start_new_read = false;
@@ -371,9 +373,10 @@ static void audio_decode(uint8_t into_half)
       }
       audio_block_ctr = 0;
     }
-    qoa_decode_slice(&audio_dec_state, *data, pcm);
+    int16_t decoded_pcm[20];
+    qoa_decode_slice(&audio_dec_state, *data, decoded_pcm);
     for (int i = 0; i < 20; i++)
-      pcm[i] >>= 2;
+      pcm[i] = sample(decoded_pcm[i] >> 2);
     /* if (n_called == 6 || start_new_read) {
       swv_printf("data: %08x%08x\ndecoded: ",
         (uint32_t)(data[0] >> 32), (uint32_t)(data[0] >> 0));
@@ -648,9 +651,9 @@ int main()
   while (1) { }
 */
 
-  // 480 Hz
-  HAL_I2S_Transmit_DMA(&i2s1, (uint16_t *)audio_pcm_buf, 480);
+  HAL_I2S_Transmit_DMA(&i2s1, (uint16_t *)audio_pcm_buf, 480 * 2);
 /*
+  // 480 Hz
   uint16_t data[1000];
   for (int i = 0; i < 1000; i++) data[i] = (i % 100 < 50 ? 4000 : 0);
   while (1) {
